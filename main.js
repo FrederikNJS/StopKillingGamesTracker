@@ -698,7 +698,7 @@ function updateTotalProgress() {
             // Calculate the percentage towards the goal
             const percentage = ((signatureCount / goal) * 100).toFixed(2);
 
-            //Display confetti when a signature is added
+            // Display confetti when a signature is added
             if (previousSignatureCount < signatureCount && previousSignatureCount !== 0) {
                 // Also update today's count when new signatures come in, but don't show loading message
                 updateTotalSignatures(/* showLoadingMessage: */ false);
@@ -927,40 +927,78 @@ async function fetchTotalSignaturesFromYesterday() {
 async function updateTotalSignatures(showLoadingMessage = true) {
     console.log('updateTotalSignatures called, showLoadingMessage:', showLoadingMessage);
     const todayCountElement = document.querySelector('.today-count');
-    
+    const yesterdayCountElement = document.querySelector('.yesterday-count');
     // Only show loading message on initial load, not during updates
     if (showLoadingMessage && !todayCountElement.dataset.hasValue) {
         todayCountElement.textContent = 'Calculating today\'s signatures...';
     }
-
+    if (showLoadingMessage && !yesterdayCountElement.dataset.hasValue) {
+        yesterdayCountElement.textContent = 'Calculating yesterday\'s signatures...';
+    }
     if (totalSignaturesFromYesterday.loading) {
         console.log('Historical data still loading, waiting...');
         // Historical data hasn't loaded yet, bail out.
         return;
     }
-
     if (totalSignaturesFromYesterday.error != null) {
         console.log('Historical data error:', totalSignaturesFromYesterday.error);
         todayCountElement.textContent = 'Couldn\'t calculate today\'s signatures: ' + totalSignaturesFromYesterday.error.toString();
+        yesterdayCountElement.textContent = 'Couldn\'t calculate yesterday\'s signatures: ' + totalSignaturesFromYesterday.error.toString();
         return;
     }
-
     if (totalSignaturesFromYesterday.data === null) {
         console.log('No historical data available yet');
-        // It's possible that we haven't even requested to fetch the data, so don't update until that is the case.
+        todayCountElement.textContent = 'No historical data available yet';
+        yesterdayCountElement.textContent = 'No historical data available yet';
         return;
     }
-
     try {
         // Get current total from main API first
         const currentResponse = await fetch('https://eci.ec.europa.eu/045/public/api/report/progression');
         const currentData = await currentResponse.json();
-
         const currentTotal = currentData.signatureCount;
         const previousTotal = totalSignaturesFromYesterday.data;
         const todaySignatures = Math.max(0, currentTotal - previousTotal);
-        
-        console.log('Current total:', currentTotal, 'Previous total:', previousTotal, 'Today\'s signatures:', todaySignatures);
+
+        // Fetch yesterday's signatures
+        let yesterdaySignatures = null;
+        try {
+            const response = await fetch('https://stopkillinggameshistoricdata.montoria.se/historic-data');
+            const historicData = await response.json();
+            historicData.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+            const now = new Date();
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+            const dayBeforeYesterday = new Date(today); dayBeforeYesterday.setDate(today.getDate() - 2);
+            const yesterdayEntry = historicData.find(entry => {
+                const entryDate = new Date(entry.timestamp);
+                return entryDate >= yesterday && entryDate < today;
+            });
+            const dayBeforeYesterdayEntry = historicData.find(entry => {
+                const entryDate = new Date(entry.timestamp);
+                return entryDate >= dayBeforeYesterday && entryDate < yesterday;
+            });
+            if (yesterdayEntry && dayBeforeYesterdayEntry) {
+                const yesterdayTotal = yesterdayEntry.data.reduce((sum, country) => sum + country.totalCount, 0);
+                const dayBeforeYesterdayTotal = dayBeforeYesterdayEntry.data.reduce((sum, country) => sum + country.totalCount, 0);
+                yesterdaySignatures = yesterdayTotal - dayBeforeYesterdayTotal;
+            }
+        } catch (e) {
+            console.error('Error fetching yesterday\'s signatures:', e);
+        }
+
+        // Update yesterday's count
+        if (yesterdaySignatures !== null && !isNaN(yesterdaySignatures)) {
+            yesterdayCountElement.innerHTML = '';
+            const textElement = document.createElement('span');
+            textElement.className = 'count-down';
+            textElement.textContent = `Signatures yesterday: +${yesterdaySignatures.toLocaleString()}`;
+            yesterdayCountElement.appendChild(textElement);
+            yesterdayCountElement.dataset.value = yesterdaySignatures;
+            yesterdayCountElement.dataset.hasValue = 'true';
+        } else {
+            yesterdayCountElement.textContent = 'Could not load yesterday\'s signatures';
+        }
 
         // Get previous value for animation
         const prevValue = parseInt(todayCountElement.dataset.value) || 0;
